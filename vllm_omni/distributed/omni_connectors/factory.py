@@ -91,6 +91,17 @@ def _create_yuanrong_connector(config: dict[str, Any]) -> OmniConnectorBase:
     return YuanrongConnector(config)
 
 
+def _create_yuanrong_transfer_engine_connector(config: dict[str, Any]) -> OmniConnectorBase:
+    try:
+        from .connectors.yuanrong_transfer_engine_connector import YuanrongTransferEngineConnector
+    except ImportError:
+        import sys
+
+        sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+        from omni_connectors.connectors.yuanrong_transfer_engine_connector import YuanrongTransferEngineConnector
+    return YuanrongTransferEngineConnector(config)
+
+
 def _create_mooncake_transfer_engine_connector(config: dict[str, Any]) -> OmniConnectorBase:
     try:
         from .connectors.mooncake_transfer_engine_connector import MooncakeTransferEngineConnector
@@ -107,5 +118,6 @@ OmniConnectorFactory.register_connector("MooncakeStoreConnector", _create_moonca
 OmniConnectorFactory.register_connector("MooncakeTransferEngineConnector", _create_mooncake_transfer_engine_connector)
 OmniConnectorFactory.register_connector("SharedMemoryConnector", _create_shm_connector)
 OmniConnectorFactory.register_connector("YuanrongConnector", _create_yuanrong_connector)
+OmniConnectorFactory.register_connector("YuanrongTransferEngineConnector", _create_yuanrong_transfer_engine_connector)
 # Backward-compatible aliases – will be removed in the future
 OmniConnectorFactory.register_connector("MooncakeConnector", _create_mooncake_store_connector)
