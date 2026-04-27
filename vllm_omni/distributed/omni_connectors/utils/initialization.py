@@ -4,6 +4,7 @@
 """Utilities for OmniConnector configuration and validation."""
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -27,6 +28,10 @@ KV_TRANSFER_PORT_OFFSET = 100
 # when TP > 1.  Must be larger than the maximum number of pipeline stages.
 # Formula: zmq_port = base + KV_TRANSFER_PORT_OFFSET + rank * STRIDE + stage
 KV_RANK_PORT_STRIDE = 16
+_ROLE_AWARE_TRANSFER_ENGINE_CONNECTORS = {
+    "MooncakeTransferEngineConnector",
+    "YuanrongTransferEngineConnector",
+}
 
 
 def initialize_connectors_from_config(
@@ -84,9 +89,9 @@ def create_connectors_from_config(
     for edge_key, connector_spec in connectors_config.items():
         from_stage, to_stage = edge_key
         try:
-            if connector_spec.name == "MooncakeTransferEngineConnector":
+            if connector_spec.name in _ROLE_AWARE_TRANSFER_ENGINE_CONNECTORS:
                 extra = dict(connector_spec.extra) if connector_spec.extra else {}
-                base_port = extra.get("zmq_port", 50051)
+                base_port = int(os.path.expandvars(str(extra.get("zmq_port", 50051))))
                 try:
                     stage_offset = int(from_stage)
                 except (TypeError, ValueError):

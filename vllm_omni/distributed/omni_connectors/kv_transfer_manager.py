@@ -3,6 +3,7 @@
 """Unified OmniConnector and KV cache transfer management."""
 
 import json
+import os
 import struct
 import time
 from collections.abc import Callable
@@ -33,6 +34,11 @@ logger = init_logger(__name__)
 
 LayerKV = torch.Tensor | tuple[torch.Tensor, torch.Tensor]
 
+_KV_TRANSFER_ENGINE_CONNECTORS = {
+    "MooncakeTransferEngineConnector",
+    "YuanrongTransferEngineConnector",
+}
+
 _SAFE_TORCH_DTYPES = {
     name: dtype
     for name in (
@@ -55,6 +61,12 @@ _SAFE_TORCH_DTYPES = {
     )
     if isinstance((dtype := getattr(torch, name, None)), torch.dtype)
 }
+
+
+def _expand_env_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return os.path.expandvars(value)
+    return value
 
 
 @dataclass
@@ -404,8 +416,8 @@ class OmniKVTransferManager:
             if cfg and (c_type := cfg.get("type")):
                 try:
                     c_extra = {k: v for k, v in cfg.items() if k != "type"}
-                    if c_type == "MooncakeTransferEngineConnector":
-                        base_port = c_extra.get("zmq_port", 50051)
+                    if c_type in _KV_TRANSFER_ENGINE_CONNECTORS:
+                        base_port = int(_expand_env_value(c_extra.get("zmq_port", 50051)))
                         c_extra["from_stage"] = (
                             str(self.config.from_stage) if self.config.from_stage is not None else "0"
                         )
@@ -417,13 +429,23 @@ class OmniKVTransferManager:
                             stage_int = 0
                         zmq_port = kv_zmq_port(base_port, stage_int, self._tp_topo.local_rank)
 
+                        if c_type == "YuanrongTransferEngineConnector":
+                            device_name = str(_expand_env_value(c_extra.get("device_name", "auto"))).strip().lower()
+                            if device_name in {"", "auto"}:
+                                c_extra["device_name"] = f"npu:{self._tp_topo.local_rank}"
+
                         if self.config.need_send_cache:
                             c_extra["role"] = "sender"
                             c_extra["zmq_port"] = zmq_port
                         elif self.config.need_recv_cache:
                             c_extra["role"] = "receiver"
-                            c_extra.setdefault("sender_host", c_extra.get("host", "127.0.0.1"))
-                            c_extra.setdefault("sender_zmq_port", zmq_port)
+                            # Receiver-side sender endpoints are request-scoped.
+                            # They are attached by the orchestrator as
+                            # kv_sender_info and applied in update_sender_info().
+                            # Do not derive sender_host from this receiver's
+                            # local YAML host; on multi-node runs that points at
+                            # the wrong process. Explicit sender_* YAML values
+                            # are still preserved for standalone connector use.
 
                     logger.info(
                         "Initializing OmniConnector type=%s role=%s",
@@ -1051,6 +1073,8 @@ class OmniKVTransferManager:
                                 raw_data.release()
                                 managed_buffer = None
                             else:
+                                if getattr(buf_tensor.device, "type", "cpu") != "cpu":
+                                    buf_tensor = buf_tensor.cpu()
                                 data = KVCacheTransferData.from_bytes(memoryview(buf_tensor.numpy()))
                                 data = self._clone_received_payload_tensors(data)
                                 raw_data.release()

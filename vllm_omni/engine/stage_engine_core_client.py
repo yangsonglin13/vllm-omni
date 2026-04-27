@@ -7,6 +7,7 @@ Directly inherits from vLLM's AsyncMPClient to reuse EngineCore architecture.
 from __future__ import annotations
 
 import multiprocessing.connection
+import os
 import socket
 import threading
 import weakref
@@ -29,6 +30,11 @@ if TYPE_CHECKING:
     from vllm_omni.inputs.data import OmniTokensPrompt
 
 logger = init_logger(__name__)
+
+_KV_TRANSFER_ENGINE_CONNECTORS = {
+    "MooncakeTransferEngineConnector",
+    "YuanrongTransferEngineConnector",
+}
 
 
 class StageEngineCoreClientBase:
@@ -291,11 +297,13 @@ class StageEngineCoreClientBase:
         if sender_host is not None:
             self._kv_sender_host = sender_host
 
+        connector_type = connector_config.get("type")
         sender_port = connector_config.get("sender_zmq_port")
-        if sender_port is None:
+        if connector_type in _KV_TRANSFER_ENGINE_CONNECTORS or sender_port is None:
             base_port = connector_config.get("zmq_port")
             if base_port is None:
                 return
+            base_port = os.path.expandvars(str(base_port))
 
             omni_kv_config = getattr(self, "_omni_kv_config", None)
             from_stage = self.stage_id

@@ -5,6 +5,10 @@ from .connectors.base import OmniConnectorBase
 from .connectors.mooncake_store_connector import MooncakeStoreConnector
 from .connectors.shm_connector import SharedMemoryConnector
 from .connectors.yuanrong_connector import YuanrongConnector
+try:
+    from .connectors.yuanrong_transfer_engine_connector import YuanrongTransferEngineConnector
+except ImportError:
+    YuanrongTransferEngineConnector = None
 
 try:
     from .connectors.mooncake_transfer_engine_connector import MooncakeTransferEngineConnector
@@ -39,6 +43,7 @@ __all__ = [
     "MooncakeTransferEngineConnector",
     "SharedMemoryConnector",
     "YuanrongConnector",
+    "YuanrongTransferEngineConnector",
     # Utilities
     "load_omni_transfer_config",
     "initialize_connectors_from_config",

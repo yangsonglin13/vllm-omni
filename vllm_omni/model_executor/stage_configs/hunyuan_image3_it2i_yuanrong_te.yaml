@@ -1,0 +1,118 @@
+# Stage config for HunyuanImage-3.0 Image+Text-to-Image with AR->DiT KV reuse
+# over Yuanrong TransferEngine on NPU.
+#
+# This config targets 12x NPU, split as:
+#   - Stage 0 AR:  devices 0,1,2,3,4,5,6,7
+#   - Stage 1 DiT: devices 8,9,10,11
+#
+# Yuanrong TransferEngine notes:
+#   - host is set to "auto" so the connector advertises a routable local IP.
+#   - zmq_port is a base port. KV workers derive rank-aware ports from it.
+#   - device_name is "auto"; each TP worker resolves it to npu:<local_rank>.
+#   - memory_pool_device is "npu" for the Ascend TransferEngine fast path.
+#   - yr.datasystem must be importable in the runtime environment.
+
+stage_args:
+  - stage_id: 0
+    stage_type: llm
+    prompt_expand_func: vllm_omni.model_executor.stage_input_processors.hunyuan_image3.expand_cfg_prompts
+    runtime:
+      process: true
+      devices: "0,1,2,3,4,5,6,7"
+      max_batch_size: 1
+      requires_multimodal_data: true
+    engine_args:
+      model_stage: AR
+      max_num_seqs: 1
+      model_arch: HunyuanImage3ForCausalMM
+      worker_cls: vllm_omni.platforms.npu.worker.npu_ar_worker.NPUARWorker
+      scheduler_cls: vllm_omni.core.sched.omni_ar_scheduler.OmniARScheduler
+      gpu_memory_utilization: 0.5
+      enforce_eager: true
+      trust_remote_code: true
+      engine_output_type: latent
+      distributed_executor_backend: "mp"
+      enable_prefix_caching: false
+      max_num_batched_tokens: 8192
+      tensor_parallel_size: 8
+      pipeline_parallel_size: 1
+      hf_overrides:
+        rope_parameters:
+          mrope_section: [0, 32, 32]
+          rope_type: default
+      omni_kv_config:
+        need_send_cache: true
+        rank_mapping:
+          from_tp: 8
+          to_tp: 4
+    is_comprehension: false
+    final_output: false
+    default_sampling_params:
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 1024
+      max_tokens: 4096
+      stop_token_ids: [127957]
+      detokenize: false
+    output_connectors:
+      to_stage_1: yuanrong_te_connector
+
+  - stage_id: 1
+    stage_type: diffusion
+    cfg_kv_collect_func: vllm_omni.model_executor.stage_input_processors.hunyuan_image3.collect_cfg_kv_caches
+    runtime:
+      process: true
+      devices: "8,9,10,11"
+      max_batch_size: 1
+      requires_multimodal_data: true
+    engine_args:
+      max_num_seqs: 1
+      model_stage: dit
+      model_arch: HunyuanImage3ForCausalMM
+      gpu_memory_utilization: 0.8
+      enforce_eager: true
+      trust_remote_code: true
+      engine_output_type: image
+      distributed_executor_backend: "mp"
+      enable_prefix_caching: false
+      max_num_batched_tokens: 32768
+      parallel_config:
+        tensor_parallel_size: 4
+        enable_expert_parallel: true
+      omni_kv_config:
+        need_recv_cache: true
+        rank_mapping:
+          from_tp: 8
+          to_tp: 4
+    engine_input_source: [0]
+    custom_process_input_func: vllm_omni.model_executor.stage_input_processors.hunyuan_image3.ar2diffusion
+    final_output: true
+    final_output_type: image
+    is_comprehension: false
+    default_sampling_params:
+      num_inference_steps: 50
+      guidance_scale: 2.5
+      seed: 42
+    input_connectors:
+      from_stage_0: yuanrong_te_connector
+
+runtime:
+  enabled: true
+  defaults:
+    window_size: -1
+    max_inflight: 1
+  connectors:
+    yuanrong_te_connector:
+      name: YuanrongTransferEngineConnector
+      extra:
+        host: "auto"
+        zmq_port: 50051
+        rpc_port: "auto"
+        protocol: "ascend"
+        device_name: "auto"
+        memory_pool_size: 1073741824
+        memory_pool_device: "npu"
+  edges:
+    - from: 0
+      to: 1
+      window_size: -1
